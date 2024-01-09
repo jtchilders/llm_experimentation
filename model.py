@@ -6,19 +6,6 @@ import os
 import logging
 logger = logging.getLogger(__name__)
 
-class WordEmbeddingModel(nn.Module):
-   def __init__(self, vocab_size, embedding_dim):
-      super(WordEmbeddingModel, self).__init__()
-      self.embeddings = nn.Embedding(vocab_size, embedding_dim)
-      self.linear = nn.Linear(embedding_dim, vocab_size)
-
-   def forward(self, context_idxs):
-      embeds = self.embeddings(context_idxs)
-      embeds = torch.sum(embeds, dim=0)
-      out = self.linear(embeds)
-      log_probs = F.log_softmax(out, dim=0)
-      return log_probs
-
 
 class NGramLanguageModeler(nn.Module):
    def __init__(self, vocab_size, embedding_dim, context_size):
