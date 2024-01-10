@@ -2,12 +2,13 @@ import logging
 import argparse
 import os
 import datetime
+import json
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # Ignore warnings
 from time import gmtime, strftime
 from wikidata import WikiDataProcessor
 from tokens import load_or_train_tokenizer
 from dataset import WikiDataset
-from model import NGramLanguageModeler
+from model import NGramLanguageModeler,count_parameters
 from trainer import train
 import torch
 from mpi import COMM_WORLD,rank,world_size,local_rank
@@ -20,13 +21,14 @@ def main():
                      help='increase output verbosity')
    parser.add_argument('-d','--device', type=str, default='cuda',
                         help='device to use for training (cuda or cpu)')
-   parser.add_argument('-o','--output-dir', type=str, default=os.path.join('results', datetime.datetime.now().strftime("%Y%m%d-%H%M%S")))
-   parser.add_argument('-b','--batch-size', type=int, default=256)
-   parser.add_argument('-e','--epochs', type=int, default=10)
-   parser.add_argument('-c','--context-size', type=int, default=2)
-   parser.add_argument('-l','--learning-rate', type=float, default=0.001)
-   parser.add_argument('-i','--log-interval', type=int, default=500)
-   parser.add_argument('-m','--embedding-dim', type=int, default=200)
+   parser.add_argument('-o','--output-dir', help='output directory for checkpoints, tensorboard, and logs.', type=str, default=os.path.join('results', datetime.datetime.now().strftime("%Y%m%d-%H%M%S")))
+   parser.add_argument('-b','--batch-size', help='batch size', type=int, default=256)
+   parser.add_argument('-e','--epochs', help='number of training epochs', type=int, default=10)
+   parser.add_argument('-c','--context-size', help='context size for training embeddings', type=int, default=2)
+   parser.add_argument('-l','--learning-rate', help='learning rate', type=float, default=0.001)
+   parser.add_argument('-i','--log-interval', help='print every N steps during training', type=int, default=500)
+   parser.add_argument('-m','--embedding-dim', help='embedding dimension', type=int, default=200)
+   parser.add_argument('--train-file', help='training data file', type=str, default='/lus/eagle/projects/datascience/parton/data/wikitext-103-raw/wiki.train.raw')
    args = parser.parse_args()
 
 
@@ -50,9 +52,27 @@ def main():
    log_interval = args.log_interval
    context_size = args.context_size
 
-   data_file = '/lus/eagle/projects/atlas_aesp/data/wikitext-103-raw/wiki.train.raw'
-   tokens_file = '/lus/eagle/projects/atlas_aesp/data/wikitext-103-raw/wiki.train.raw.json'
+   train_file = args.train_file
+   tokens_file = train_file + '.json'
    embedding_dim = args.embedding_dim # you can choose an appropriate embedding dimension
+
+
+   # write all config parameters to output direction in json format
+   if rank == 0:
+      os.makedirs(OUTPUT_DIR, exist_ok=True)
+      config = {
+         'epochs': epochs,
+         'lr': lr,
+         'batch_size': batch_size,
+         'log_interval': log_interval,
+         'context_size': context_size,
+         'embedding_dim': embedding_dim,
+         'train_file': train_file,
+         'tokens_file': tokens_file,
+         'world_size': world_size,
+      }
+      with open(os.path.join(OUTPUT_DIR, 'config.json'), 'w') as f:
+         json.dump(config, f)
 
    # Log debug output
    logger.debug(f"Running main function with rank {rank} and world size {world_size}")
@@ -65,12 +85,18 @@ def main():
    logger.info(f"Using device: {device}")
 
    # tokenizer = load_or_train_tokenizer(data_file, tokens_file)
-   dataset = WikiDataset(data_file, tokens_file,context_size)
+   dataset = WikiDataset(train_file, tokens_file,context_size)
    logger.info(f'vocab size: {dataset.tokenizer.get_vocab_size()}')
    model = NGramLanguageModeler(dataset.tokenizer.get_vocab_size(), embedding_dim, context_size).to(device)
 
-   train(model, dataset, epochs, lr, batch_size, log_interval, device, OUTPUT_DIR)
+   total_params = count_parameters(model)
+   logger.info(f"Total number of model parameters: {total_params}")
+
+  
+   train(model, dataset, epochs, lr, batch_size, 
+         log_interval, device, OUTPUT_DIR)
 
 # Call the main function
 if __name__ == "__main__":
    main()
+      
