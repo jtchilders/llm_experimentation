@@ -1,17 +1,19 @@
 #!/bin/bash
-#PBS -l walltime=0:30:00
-#PBS -l select=2
+#PBS -l walltime=0:60:00
+#PBS -l select=8
 #PBS -A datascience
 #PBS -l filesystems=home:eagle
-#PBS -q debug
-#PBS -o submit_polaris.stdout
-#PBS -e submit_polaris.stderr
+#PBS -q debug-scaling
+#PBS -o results/submit_polaris.stdout
+#PBS -e results/submit_polaris.stderr
 
 cd $PBS_O_WORKDIR
-export FILENAME_DATE=$(date +"%Y%m%d_%H%M%S")
+export PBS_JOBID_NUMBER=$(echo $PBS_JOBID | cut -d'.' -f1)
+export FILENAME_DATE=$(date +"%Y-%m-%d_%H%M").jid${PBS_JOBID_NUMBER}
 {
    
-   module load conda/2023-10-04
+   module load libfabric
+   module try-load conda/2023-10-04
    conda activate
 
    echo listing nodes:
