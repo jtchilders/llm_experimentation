@@ -6,9 +6,10 @@ from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.tensorboard import SummaryWriter
+from model import save_checkpoint,load_checkpoint
 import os
 import socket
-import datetime
+import datetime,time
 import logging
 logger = logging.getLogger(__name__)
 from mpi import COMM_WORLD,rank,world_size,local_rank
@@ -43,12 +44,15 @@ def setup(rank, world_size):
 def cleanup():
    torch.distributed.destroy_process_group()
 
+
 def train(model, dataset, epochs, lr, batch_size, log_interval, device, output_dir):
 
    CHECKPOINT_DIR = os.path.join(output_dir, "checkpoints")
    LOG_DIR = os.path.join(output_dir, "tensorboard")
    if rank == 0:
       os.makedirs(output_dir, exist_ok=True)
+      os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+      os.makedirs(LOG_DIR, exist_ok=True)
    
    logging.debug('Starting training')
    setup(rank, world_size)
@@ -76,23 +80,28 @@ def train(model, dataset, epochs, lr, batch_size, log_interval, device, output_d
 
    for epoch in range(epochs):
       model.train()
-      total_loss = 0.0
+      total_loss = torch.zeros(1, device=device)
       logging.info(f'Starting Epoch {epoch}:')
+      rate_timer_start = time.time()
       for i, (context, target) in enumerate(data_loader):
          # Move data to the current device
          context, target = context.to(device), target.to(device)
-
          model.zero_grad()
          output = model(context)
          loss = loss_fn(output, target)
          loss.backward()
          optimizer.step()
-
-         total_loss += loss.item()
-         if writer and i % log_interval == 0 and rank == 0:
-            writer.add_scalar('Loss/train', total_loss / log_interval, epoch * len(data_loader) + i)
-            logging.info(f'Rank {rank}/{world_size} Epoch {epoch}/{epochs} Batch {i}/{len(data_loader)}: Loss {total_loss / log_interval}')
-            total_loss = 0.0
+         total_loss += loss.detach()
+         if writer and ((i+1) % log_interval == 0) and rank == 0:
+            avg_rate =  log_interval * batch_size * world_size / (time.time() - rate_timer_start)
+            avg_loss = total_loss.item() / log_interval
+            rate_timer_start = time.time()
+            writer.add_scalar('Metrics/Running Average Loss', avg_loss, epoch * len(data_loader) + i)
+            writer.add_scalar('Metrics/Running Average Rate', avg_rate, epoch * len(data_loader) + i)
+            writer.add_scalar('Metrics/Learning Rate', optimizer.param_groups[0]['lr'], epoch * len(data_loader) + i)
+            # print log output including loss and rate using scientific notation
+            logging.info(f'Rank {rank}/{world_size} Epoch {epoch}/{epochs} Batch {i}/{len(data_loader)}: Loss {avg_loss:.4e} Rate {avg_rate:.4e}')
+            total_loss = torch.zeros(1, device=device)
 
             with torch.no_grad():
                word_embeddings = model.module.embeddings.weight
@@ -105,9 +114,12 @@ def train(model, dataset, epochs, lr, batch_size, log_interval, device, output_d
 
                   cos_sim = F.cosine_similarity(embed1.unsqueeze(0), embed2.unsqueeze(0))
                   writer.add_scalar(f'Cosine_Similarity/{word1}_{word2}', cos_sim, epoch * len(data_loader) + i)
+         # force early stop for profiling
+         if i > 10000:
+            break
       # save model once per epoch
       if rank == 0:
-         model.save_checkpoint(model, optimizer, epoch+1,0, CHECKPOINT_DIR)
+         save_checkpoint(model, optimizer, epoch+1,0, CHECKPOINT_DIR)
 
    if writer:
       writer.close()
