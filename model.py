@@ -24,37 +24,41 @@ class NGramLanguageModeler(nn.Module):
       log_probs = F.log_softmax(out, dim=1)
       return log_probs
 
-   def save_checkpoint(model, optimizer, epoch, step, checkpoint_dir):
-      model_to_save = model.module if isinstance(model, nn.DataParallel) else model
-      checkpoint_path = os.path.join(checkpoint_dir, f'checkpoint_epoch_{epoch:06}_step_{step:06}.pth')
-      torch.save({
-         'epoch': epoch,
-         'step': step,
-         'model_state_dict': model_to_save.state_dict(),
-         'optimizer_state_dict': optimizer.state_dict(),
-      }, checkpoint_path)
 
-   def load_checkpoint(checkpoint_path, model):
-      checkpoint = torch.load(checkpoint_path)
+def save_checkpoint(model, optimizer, epoch, step, checkpoint_dir):
+   model_to_save = model.module if isinstance(model, nn.DataParallel) else model
+   checkpoint_path = os.path.join(checkpoint_dir, f'checkpoint_epoch_{epoch:06}_step_{step:06}.pth')
+   torch.save({
+      'epoch': epoch,
+      'step': step,
+      'model_state_dict': model_to_save.state_dict(),
+      'optimizer_state_dict': optimizer.state_dict(),
+   }, checkpoint_path)
 
-      # Check if the model is wrapped in DataParallel
-      is_model_data_parallel = isinstance(model, DDP)
+def load_checkpoint(checkpoint_path, model):
+   checkpoint = torch.load(checkpoint_path)
 
-      # Prepare new state dict with appropriate key formatting
-      new_state_dict = {}
-      for k, v in checkpoint['model_state_dict'].items():
-         if is_model_data_parallel:
-            # Add 'module.' prefix if missing
-            new_k = f'module.{k}' if not k.startswith('module.') else k
-         else:
-            # Remove 'module.' prefix if present
-            new_k = k.replace('module.', '') if k.startswith('module.') else k
-         new_state_dict[new_k] = v
+   # Check if the model is wrapped in DataParallel
+   is_model_data_parallel = isinstance(model, DDP)
 
-      # Load the adjusted state dict
-      checkpoint['model_state_dict'] = new_state_dict
+   # Prepare new state dict with appropriate key formatting
+   new_state_dict = {}
+   for k, v in checkpoint['model_state_dict'].items():
+      if is_model_data_parallel:
+         # Add 'module.' prefix if missing
+         new_k = f'module.{k}' if not k.startswith('module.') else k
+      else:
+         # Remove 'module.' prefix if present
+         new_k = k.replace('module.', '') if k.startswith('module.') else k
+      new_state_dict[new_k] = v
 
-      return checkpoint
+   # Load the adjusted state dict
+   checkpoint['model_state_dict'] = new_state_dict
+
+   return checkpoint
+
+def count_parameters(model):
+   return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 # Example usage
 # vocab_size = 10000  # replace with your actual vocab size
