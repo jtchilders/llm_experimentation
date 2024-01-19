@@ -7,6 +7,7 @@ from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.tensorboard import SummaryWriter
 from model import save_checkpoint,load_checkpoint
+import profiler
 import os
 import socket
 import datetime,time
@@ -30,7 +31,7 @@ def setup(rank, world_size):
    os.environ["MASTER_ADDR"] = master_addr
    os.environ["MASTER_PORT"] = str(master_port)
    # dist.init_process_group("mpi", rank=rank, world_size=world_size)
-   backend = 'nccl'
+   backend = 'gloo'
    init_method = 'env://'
    torch.distributed.init_process_group(
          backend     = backend,
@@ -45,7 +46,8 @@ def cleanup():
    torch.distributed.destroy_process_group()
 
 
-def train(model, dataset, epochs, lr, batch_size, log_interval, device, output_dir):
+def train(model, dataset, epochs, lr, batch_size, log_interval, device, output_dir,
+          pytorch_profiler=False,profile_steps=1000):
 
    CHECKPOINT_DIR = os.path.join(output_dir, "checkpoints")
    LOG_DIR = os.path.join(output_dir, "tensorboard")
@@ -69,7 +71,7 @@ def train(model, dataset, epochs, lr, batch_size, log_interval, device, output_d
    # Create a distributed sampler and loader
    logging.debug('Creating distributed sampler and loader')
    sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank)
-   data_loader = DataLoader(dataset, batch_size=batch_size, sampler=sampler)
+   data_loader = DataLoader(dataset, batch_size=batch_size, sampler=sampler)#,num_workers=4,pin_memory=True,persistent_workers=True)
 
    # Wrap model for distributed training
    logging.debug('Wrapping model for distributed training')
@@ -78,19 +80,35 @@ def train(model, dataset, epochs, lr, batch_size, log_interval, device, output_d
    loss_fn = nn.NLLLoss()
    optimizer = optim.Adam(model.parameters(), lr=lr)
 
+   prof = None
+   if pytorch_profiler:
+      logger.info('running pytorch profiler')
+      prof = profiler.get_profiler(LOG_DIR)
+
    for epoch in range(epochs):
       model.train()
       total_loss = torch.zeros(1, device=device)
       logging.info(f'Starting Epoch {epoch}:')
       rate_timer_start = time.time()
+      
+      if prof:
+         prof.start()
       for i, (context, target) in enumerate(data_loader):
          # Move data to the current device
+         if prof: torch.cuda.synchronize()
          context, target = context.to(device), target.to(device)
+         if prof: torch.cuda.synchronize()
          model.zero_grad()
+         if prof: torch.cuda.synchronize()
          output = model(context)
+         if prof: torch.cuda.synchronize()
          loss = loss_fn(output, target)
+         if prof: torch.cuda.synchronize()
          loss.backward()
+         if prof: torch.cuda.synchronize()
          optimizer.step()
+         if prof: torch.cuda.synchronize()
+         
          total_loss += loss.detach()
          if writer and ((i+1) % log_interval == 0) and rank == 0:
             avg_rate =  log_interval * batch_size * world_size / (time.time() - rate_timer_start)
@@ -103,20 +121,27 @@ def train(model, dataset, epochs, lr, batch_size, log_interval, device, output_d
             logging.info(f'Rank {rank}/{world_size} Epoch {epoch}/{epochs} Batch {i}/{len(data_loader)}: Loss {avg_loss:.4e} Rate {avg_rate:.4e}')
             total_loss = torch.zeros(1, device=device)
 
-            with torch.no_grad():
-               word_embeddings = model.module.embeddings.weight
-               for word1, word2 in similar_words:
-                  idx1 = dataset.tokenizer.encode(word1).ids[0]
-                  idx2 = dataset.tokenizer.encode(word2).ids[0]
+            if not dataset.use_synthetic:
+               with torch.no_grad():
+                  word_embeddings = model.module.embeddings.weight
+                  for word1, word2 in similar_words:
+                     idx1 = dataset.tokenizer.encode(word1).ids[0]
+                     idx2 = dataset.tokenizer.encode(word2).ids[0]
 
-                  embed1 = word_embeddings[idx1]
-                  embed2 = word_embeddings[idx2]
+                     embed1 = word_embeddings[idx1]
+                     embed2 = word_embeddings[idx2]
 
-                  cos_sim = F.cosine_similarity(embed1.unsqueeze(0), embed2.unsqueeze(0))
-                  writer.add_scalar(f'Cosine_Similarity/{word1}_{word2}', cos_sim, epoch * len(data_loader) + i)
-         # force early stop for profiling
-         if i > 10000:
-            break
+                     cos_sim = F.cosine_similarity(embed1.unsqueeze(0), embed2.unsqueeze(0))
+                     writer.add_scalar(f'Cosine_Similarity/{word1}_{word2}', cos_sim, epoch * len(data_loader) + i)
+         if prof:
+            prof.step()
+            if i >= profile_steps:
+               break
+      if prof:
+         prof.stop()
+         if rank == 0:
+            print(prof.key_averages())
+         break
       # save model once per epoch
       if rank == 0:
          save_checkpoint(model, optimizer, epoch+1,0, CHECKPOINT_DIR)

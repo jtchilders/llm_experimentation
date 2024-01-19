@@ -28,7 +28,13 @@ def main():
    parser.add_argument('-l','--learning-rate', help='learning rate', type=float, default=0.001)
    parser.add_argument('-i','--log-interval', help='print every N steps during training', type=int, default=500)
    parser.add_argument('-m','--embedding-dim', help='embedding dimension', type=int, default=200)
+   parser.add_argument('--pytorch-profiler', action='store_true', default=False,help='enable pytorch profiler')
+   parser.add_argument('--profile-steps', help='number of steps to profile', type=int, default=1000)
    parser.add_argument('--train-file', help='training data file', type=str, default='/lus/eagle/projects/datascience/parton/data/wikitext-103-raw/wiki.train.raw')
+   parser.add_argument('--use-synthetic', action='store_true', default=False, help='use synthetic data')
+   parser.add_argument('--vocab-size', help='vocab size', type=int, default=30000)
+   parser.add_argument('--synthetic-size', help='synthetic data size', type=int, default=10000000)
+   parser.add_argument('--logdir-append', help='logdir append string', type=str, default='')
    args = parser.parse_args()
 
 
@@ -43,7 +49,7 @@ def main():
                        format=log_format,
                        datefmt='%Y-%m-%d %H:%M:%S')
 
-   OUTPUT_DIR=args.output_dir
+   OUTPUT_DIR=args.output_dir+args.logdir_append
    logger.info("Output directory: " + OUTPUT_DIR)
 
    epochs = args.epochs
@@ -55,6 +61,7 @@ def main():
    train_file = args.train_file
    tokens_file = train_file + '.json'
    embedding_dim = args.embedding_dim # you can choose an appropriate embedding dimension
+   tokenized_data_filename = train_file
 
 
    # write all config parameters to output direction in json format
@@ -69,10 +76,16 @@ def main():
          'embedding_dim': embedding_dim,
          'train_file': train_file,
          'tokens_file': tokens_file,
+         'tokenized_data_filename': tokenized_data_filename,
          'world_size': world_size,
+         'pytorch_profiler': args.pytorch_profiler,
+         'profile_steps': args.profile_steps,
+         'use_synthetic': args.use_synthetic,
+         'vocab_size': args.vocab_size,
+         'synthetic_size': args.synthetic_size,
       }
       with open(os.path.join(OUTPUT_DIR, 'config.json'), 'w') as f:
-         json.dump(config, f)
+         json.dump(config, f, indent=4, sort_keys=True)
 
    # Log debug output
    logger.debug(f"Running main function with rank {rank} and world size {world_size}")
@@ -85,16 +98,17 @@ def main():
    logger.info(f"Using device: {device}")
 
    # tokenizer = load_or_train_tokenizer(data_file, tokens_file)
-   dataset = WikiDataset(train_file, tokens_file,context_size)
-   logger.info(f'vocab size: {dataset.tokenizer.get_vocab_size()}')
-   model = NGramLanguageModeler(dataset.tokenizer.get_vocab_size(), embedding_dim, context_size).to(device)
+   dataset = WikiDataset(train_file, tokens_file, tokenized_data_filename=tokenized_data_filename, context_size=context_size,use_synthetic=args.use_synthetic,vocab_size=args.vocab_size,synthetic_size=args.synthetic_size)
+   logger.info(f'vocab size: {dataset.vocab_size}')
+   model = NGramLanguageModeler(dataset.vocab_size, embedding_dim, context_size).to(device)
 
    total_params = count_parameters(model)
    logger.info(f"Total number of model parameters: {total_params}")
 
   
    train(model, dataset, epochs, lr, batch_size, 
-         log_interval, device, OUTPUT_DIR)
+         log_interval, device, OUTPUT_DIR, 
+         profile_steps=args.profile_steps, pytorch_profiler=args.pytorch_profiler)
 
 # Call the main function
 if __name__ == "__main__":
