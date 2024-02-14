@@ -7,6 +7,7 @@ from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.tensorboard import SummaryWriter
 from model import save_checkpoint,load_checkpoint
+import numpy as np
 import profiler
 import os
 import socket
@@ -45,9 +46,17 @@ def setup(rank, world_size):
 def cleanup():
    torch.distributed.destroy_process_group()
 
+def lr_schedule(step, warmup_steps, total_steps):
+    if step < warmup_steps:
+        return float(step) / float(max(1, warmup_steps))
+    else:
+        # Cosine decay
+        return 0.5 * (1.0 + np.cos(np.pi * (step - warmup_steps) / (total_steps - warmup_steps)))
+
+
 
 def train(model, dataset, epochs, lr, batch_size, log_interval, device, output_dir,
-          pytorch_profiler=False,profile_steps=1000):
+          pytorch_profiler=False,profile_steps=1000,warmup_steps=5000):
 
    CHECKPOINT_DIR = os.path.join(output_dir, "checkpoints")
    LOG_DIR = os.path.join(output_dir, "tensorboard")
@@ -78,7 +87,11 @@ def train(model, dataset, epochs, lr, batch_size, log_interval, device, output_d
    model = DDP(model, device_ids=[local_rank])
 
    loss_fn = nn.NLLLoss()
-   optimizer = optim.Adam(model.parameters(), lr=lr)
+   optimizer = optim.Adam(model.parameters(), lr = lr)
+
+   # Define the LR scheduler
+   scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda step: lr_schedule(step, warmup_steps, epochs * len(data_loader)))
+
 
    prof = None
    if pytorch_profiler:
@@ -108,6 +121,9 @@ def train(model, dataset, epochs, lr, batch_size, log_interval, device, output_d
          if prof: torch.cuda.synchronize()
          optimizer.step()
          if prof: torch.cuda.synchronize()
+
+         # Update the learning rate
+         scheduler.step()
          
          total_loss += loss.detach()
          if writer and ((i+1) % log_interval == 0) and rank == 0:
@@ -116,9 +132,11 @@ def train(model, dataset, epochs, lr, batch_size, log_interval, device, output_d
             rate_timer_start = time.time()
             writer.add_scalar('Metrics/Running Average Loss', avg_loss, epoch * len(data_loader) + i)
             writer.add_scalar('Metrics/Running Average Rate', avg_rate, epoch * len(data_loader) + i)
-            writer.add_scalar('Metrics/Learning Rate', optimizer.param_groups[0]['lr'], epoch * len(data_loader) + i)
+            # writer.add_scalar('Metrics/Learning Rate', optimizer.param_groups[0]['lr'], epoch * len(data_loader) + i)
+            writer.add_scalar('Metrics/Learning Rate', scheduler.get_last_lr()[0], epoch * len(data_loader) + i)
+            writer.add_scalar('Metrics/Epoch', epoch, epoch * len(data_loader) + i)
             # print log output including loss and rate using scientific notation
-            logging.info(f'Rank {rank}/{world_size} Epoch {epoch}/{epochs} Batch {i}/{len(data_loader)}: Loss {avg_loss:.4e} Rate {avg_rate:.4e}')
+            logging.info(f'Rank {rank}/{world_size} Epoch {epoch}/{epochs} Batch {i}/{len(data_loader)}: Loss {avg_loss:.4e} Rate {avg_rate:.4e} LR {scheduler.get_last_lr()}')
             total_loss = torch.zeros(1, device=device)
 
             if not dataset.use_synthetic:
