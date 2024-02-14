@@ -28,6 +28,7 @@ def main():
    parser.add_argument('-l','--learning-rate', help='learning rate', type=float, default=0.001)
    parser.add_argument('-i','--log-interval', help='print every N steps during training', type=int, default=500)
    parser.add_argument('-m','--embedding-dim', help='embedding dimension', type=int, default=200)
+   parser.add_argument('--warmup-steps', help='number of steps to warm up', type=int, default=5000)
    parser.add_argument('--pytorch-profiler', action='store_true', default=False,help='enable pytorch profiler')
    parser.add_argument('--profile-steps', help='number of steps to profile', type=int, default=1000)
    parser.add_argument('--train-file', help='training data file', type=str, default='/lus/eagle/projects/datascience/parton/data/wikitext-103-raw/wiki.train.raw')
@@ -83,6 +84,7 @@ def main():
          'use_synthetic': args.use_synthetic,
          'vocab_size': args.vocab_size,
          'synthetic_size': args.synthetic_size,
+         'warmup_steps': args.warmup_steps
       }
       with open(os.path.join(OUTPUT_DIR, 'config.json'), 'w') as f:
          json.dump(config, f, indent=4, sort_keys=True)
@@ -108,7 +110,8 @@ def main():
   
    train(model, dataset, epochs, lr, batch_size, 
          log_interval, device, OUTPUT_DIR, 
-         profile_steps=args.profile_steps, pytorch_profiler=args.pytorch_profiler)
+         profile_steps=args.profile_steps, pytorch_profiler=args.pytorch_profiler,
+         warmup_steps=args.warmup_steps)
 
 # Call the main function
 if __name__ == "__main__":
