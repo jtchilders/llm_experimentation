@@ -53,10 +53,19 @@ def lr_schedule(step, warmup_steps, total_steps):
         # Cosine decay
         return 0.5 * (1.0 + np.cos(np.pi * (step - warmup_steps) / (total_steps - warmup_steps)))
 
+def lr_scheduleA(step, warmup_steps, total_steps, decay_factor=0.5):
+   if step < warmup_steps:
+      return float(step) / float(max(1, warmup_steps))
+   else:
+      # decay factor that decreases each cosine period (every 2 pi)
+      factors_of_pi = (step - warmup_steps) / (total_steps - warmup_steps)
+      decay_factor = decay_factor ** max(int((int(factors_of_pi)-1)/2),0)
+      return decay_factor * 0.5 * (1.0 + np.cos(np.pi * factors_of_pi))
+
 
 
 def train(model, dataset, epochs, lr, batch_size, log_interval, device, output_dir,
-          pytorch_profiler=False,profile_steps=1000,warmup_steps=5000):
+          pytorch_profiler=False,profile_steps=1000,warmup_steps=5000,total_steps=1e4):
 
    CHECKPOINT_DIR = os.path.join(output_dir, "checkpoints")
    LOG_DIR = os.path.join(output_dir, "tensorboard")
@@ -72,15 +81,18 @@ def train(model, dataset, epochs, lr, batch_size, log_interval, device, output_d
                     ("king", "queen"),
                     ("man", "woman"),
                     ("a","an"),
-                    ("them","they")]
+                    ("them","they"),
+                    ("")]
 
    # Only write logs from the first process to avoid duplicate logs
    writer = SummaryWriter(log_dir=LOG_DIR) if rank == 0 else None
 
    # Create a distributed sampler and loader
    logging.debug('Creating distributed sampler and loader')
-   sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank)
-   data_loader = DataLoader(dataset, batch_size=batch_size, sampler=sampler)#,num_workers=4,pin_memory=True,persistent_workers=True)
+
+   # sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank)
+   # data_loader = DataLoader(dataset, batch_size=batch_size, sampler=sampler)#,num_workers=4,pin_memory=True,persistent_workers=True)
+   data_loader = DataLoader(dataset, batch_size=batch_size)
 
    # Wrap model for distributed training
    logging.debug('Wrapping model for distributed training')
@@ -90,7 +102,7 @@ def train(model, dataset, epochs, lr, batch_size, log_interval, device, output_d
    optimizer = optim.Adam(model.parameters(), lr = lr)
 
    # Define the LR scheduler
-   scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda step: lr_schedule(step, warmup_steps, epochs * len(data_loader)))
+   scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda step: lr_scheduleA(step, warmup_steps, total_steps))
 
 
    prof = None

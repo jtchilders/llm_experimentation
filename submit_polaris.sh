@@ -1,6 +1,6 @@
 #!/bin/bash
 #PBS -l walltime=01:00:00
-#PBS -l select=8
+#PBS -l select=4
 #PBS -A datascience
 #PBS -l filesystems=home:eagle
 #PBS -q debug-scaling
@@ -26,7 +26,7 @@ echo starting job: $FILENAME_DATE
    echo NUM_GPUS_PER_NODE: $NUM_GPUS_PER_NODE
    echo NUM_NODES: $NUM_NODES
    export HDF5_DISABLE_VERSION_CHECK=1
-   mpiexec -n $TOTAL_MPI_RANKS -ppn $NUM_GPUS_PER_NODE --hostfile $PBS_NODEFILE python main.py -o results/$FILENAME_DATE -b 1024 -c 6 -e 1000 -i 50 -l 0.05 --warmup-steps 5000
+   mpiexec -n $TOTAL_MPI_RANKS -ppn $NUM_GPUS_PER_NODE --hostfile $PBS_NODEFILE python main.py -o results/$FILENAME_DATE -b 4096 -c 10 -e 1000 -i 50 -l 0.05 --warmup-steps 1000 --total-steps 3000 --train-file /lus/eagle/projects/datascience/parton/data/wikitext-103-raw/wiki.train.raw.tokens.symmetric.c2.h5
 
 } 1> results/$FILENAME_DATE.out 2> results/$FILENAME_DATE.err
 echo finished job: $FILENAME_DATE  time: $SECONDS

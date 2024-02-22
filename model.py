@@ -11,9 +11,9 @@ class NGramLanguageModeler(nn.Module):
    def __init__(self, vocab_size, embedding_dim, context_size):
       super(NGramLanguageModeler, self).__init__()
       self.embedding_dim = embedding_dim
-      self.context_size = context_size
+      self.context_size = context_size * 2
       self.embeddings = nn.Embedding(vocab_size, embedding_dim)
-      self.linear1 = nn.Linear(context_size * embedding_dim, 128)
+      self.linear1 = nn.Linear(self.context_size * embedding_dim, 128)
       self.linear2 = nn.Linear(128, vocab_size)
 
    def forward(self, inputs):
