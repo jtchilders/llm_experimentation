@@ -21,3 +21,12 @@ python tokenize_data.py -d ./wikitext-103-raw/wiki.train.raw -t ./wikitext-103-r
 
 The second step is running the training loop.
 `submit_polaris.sh` is an example submit script.
+
+
+# monitoring
+
+You can monitor and see the results using Tensorboard.
+
+Example view:
+
+![tensorboard](tensorboard.png)
